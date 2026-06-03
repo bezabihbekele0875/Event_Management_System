@@ -88,6 +88,75 @@ def init_db():
         pass
 
 
+class EventServiceAdapter:
+    def __init__(self, base_url):
+        self.base_url = base_url
+
+    def retrieve_event(self, event_id):
+        try:
+            response = requests.get(f"{self.base_url}/{event_id}", timeout=3)
+            if response.status_code == 200:
+                return response.json()
+        except requests.RequestException:
+            pass
+        return None
+
+
+class NotificationServiceAdapter:
+    def __init__(self, base_url):
+        self.base_url = base_url
+
+    def send_notification(self, recipient, channel, message):
+        payload = {
+            'recipient': recipient,
+            'channel': channel.upper() if channel else 'EMAIL',
+            'message': message
+        }
+        try:
+            requests.post(f"{self.base_url}/notifications", json=payload, timeout=2)
+        except requests.RequestException as ex:
+            app.logger.warning('Unable to send notification: %s', ex)
+
+    def notify_registration_created(self, student_email, event, organizer, channel):
+        try:
+            requests.post(f"{self.base_url}/registrations/created", json={
+                'studentEmail': student_email,
+                'event': event,
+                'organizer': organizer,
+                'channel': channel
+            }, timeout=2)
+        except requests.RequestException:
+            app.logger.debug('Unable to call notification registration-created endpoint')
+
+    def notify_event_full(self, event, organizer, channel):
+        try:
+            requests.post(f"{self.base_url}/events/full", json={
+                'event': event,
+                'organizer': organizer,
+                'channel': channel
+            }, timeout=2)
+        except requests.RequestException:
+            app.logger.debug('Unable to call notification event-full endpoint')
+
+    def notify_registration_cancelled(self, student_email, event_id, event_title, organizer, channel):
+        try:
+            requests.post(f"{self.base_url}/registrations/cancel", json={
+                'studentEmail': student_email,
+                'event': {
+                    'id': event_id,
+                    'title': event_title
+                },
+                'organizer': organizer,
+                'channel': channel
+            }, timeout=2)
+        except requests.RequestException:
+            app.logger.debug('Unable to call notification registrations/cancel endpoint')
+
+
+event_service = EventServiceAdapter(EVENT_SERVICE_URL)
+notification_service = NotificationServiceAdapter(NOTIFICATION_SERVICE_BASE)
+
+
 def row_to_dict(row):
     if row is None:
         return None
@@ -118,25 +187,11 @@ def find_registration(event_id, student_email):
 
 
 def retrieve_event(event_id):
-    try:
-        response = requests.get(f"{EVENT_SERVICE_URL}/{event_id}", timeout=3)
-        if response.status_code == 200:
-            return response.json()
-    except requests.RequestException:
-        pass
-    return None
+    return event_service.retrieve_event(event_id)
 
 
 def create_notification(recipient, channel, message):
-    payload = {
-        'recipient': recipient,
-        'channel': channel.upper() if channel else 'EMAIL',
-        'message': message
-    }
-    try:
-        requests.post(f"{NOTIFICATION_SERVICE_BASE}/notifications", json=payload, timeout=2)
-    except requests.RequestException as ex:
-        app.logger.warning('Unable to send notification: %s', ex)
+    notification_service.send_notification(recipient, channel, message)
 
 
 @app.route('/registrations', methods=['GET'])
@@ -246,16 +301,7 @@ def add_registration():
     create_notification(student_email, channel, f'Registration confirmed for "{registration["event_title"]}".')
     # Notify organizer of new registration and check capacity
     organizer = event.get('organizerId') or event.get('organizer')
-    try:
-        # notify via specialized endpoint so Notification service can handle observer logic
-        requests.post(f"{NOTIFICATION_SERVICE_BASE}/registrations/created", json={
-            'studentEmail': student_email,
-            'event': event,
-            'organizer': organizer,
-            'channel': channel
-        }, timeout=2)
-    except requests.RequestException:
-        app.logger.debug('Unable to call notification registration-created endpoint')
+    notification_service.notify_registration_created(student_email, event, organizer, channel)
 
     # check if event is now full
     try:
@@ -266,14 +312,7 @@ def add_registration():
                 current = int(row['count']) if row and row.get('count') is not None else 0
                 capacity = int(event.get('capacity') or 0)
                 if capacity > 0 and current >= capacity:
-                    try:
-                        requests.post(f"{NOTIFICATION_SERVICE_BASE}/events/full", json={
-                            'event': event,
-                            'organizer': organizer,
-                            'channel': channel
-                        }, timeout=2)
-                    except requests.RequestException:
-                        app.logger.debug('Unable to call notification event-full endpoint')
+                    notification_service.notify_event_full(event, organizer, channel)
     except Exception:
         pass
     return jsonify(row_to_dict(registration)), 201
@@ -322,18 +361,13 @@ def cancel_registration():
     create_notification(student_email, channel, f'Registration cancelled for "{event_title}".')
     # Notify organizer as well via specialized endpoint
     organizer = registration.get('eventOrganizer') or registration.get('organizer') or None
-    try:
-        requests.post(f"{NOTIFICATION_SERVICE_BASE}/registrations/cancel", json={
-            'studentEmail': student_email,
-            'event': {
-                'id': event_id,
-                'title': event_title
-            },
-            'organizer': organizer,
-            'channel': channel
-        }, timeout=2)
-    except requests.RequestException:
-        app.logger.debug('Unable to call notification registrations/cancel endpoint')
+    notification_service.notify_registration_cancelled(
+        student_email,
+        event_id,
+        event_title,
+        organizer,
+        channel
+    )
 
     return jsonify({'message': 'Registration cancelled successfully.'})
 

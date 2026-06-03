@@ -266,6 +266,32 @@ class EmailAdapter:
 
 - Short description: adapts internal notification calls to an external email provider API.
 
+### Adapter Pattern (Register subsystem)
+
+- Where: `Register/backend/app.py`
+
+- What (code):
+
+```python
+class EventServiceAdapter:
+    def __init__(self, base_url):
+        self.base_url = base_url
+
+    def retrieve_event(self, event_id):
+        response = requests.get(f"{self.base_url}/{event_id}", timeout=3)
+        return response.json() if response.status_code == 200 else None
+
+class NotificationServiceAdapter:
+    def __init__(self, base_url):
+        self.base_url = base_url
+
+    def send_notification(self, recipient, channel, message):
+        payload = {'recipient': recipient, 'channel': channel.upper(), 'message': message}
+        requests.post(f"{self.base_url}/notifications", json=payload, timeout=2)
+```
+
+- Short description: wraps external `EventCard` and `Notification` HTTP calls in adapter classes so the Register service uses a stable internal interface for remote integration.
+
 ### Dispatch Example
 
 - Where: `Notification/backend/app.py`

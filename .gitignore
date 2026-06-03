@@ -1,0 +1,20 @@
+# Node.js
+node_modules/
+
+# Python
+.venv/
+__pycache__/
+*.pyc
+
+# Java/Maven
+target/
+
+# VS Code
+.vscode/
+
+# Environment variables
+.env
+
+# Build folders
+dist/
+build/
